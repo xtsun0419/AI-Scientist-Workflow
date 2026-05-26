@@ -6,11 +6,15 @@ const tabs = document.querySelector("#tabs");
 const copyButton = document.querySelector("#copyButton");
 const downloadMdButton = document.querySelector("#downloadMdButton");
 const downloadPdfButton = document.querySelector("#downloadPdfButton");
+const revisionPlanButton = document.querySelector("#revisionPlanButton");
 const paperTitle = document.querySelector("#paperTitle");
 const summaryMetrics = document.querySelector("#summaryMetrics");
 
 let currentResult = null;
+let currentReviewTaskId = null;
+let currentRevisionPlan = null;
 let activeAgentId = null;
+let activeView = "review";
 let pollTimer = null;
 
 const startingAgents = [
@@ -23,6 +27,14 @@ const startingAgents = [
   ["synthesizer", "编辑综合 / Synthesizer"],
 ];
 
+const revisionAgents = [
+  ["revision_intake", "评审解析 / Revision Intake"],
+  ["structure_architect", "结构设计 / Structure Architect"],
+  ["argument_builder", "论证强化 / Argument Builder"],
+  ["citation_compliance", "证据引用 / Citation Compliance"],
+  ["revision_coach", "修改教练 / Revision Coach"],
+];
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(form);
@@ -33,6 +45,9 @@ form.addEventListener("submit", async (event) => {
   }
   formData.set("provider", "openai");
 
+  currentReviewTaskId = null;
+  currentRevisionPlan = null;
+  activeView = "review";
   setRunning(true);
   renderAgentPlaceholders();
   renderMessage("正在读取稿件并调用后端配置的外部 LLM API。完整多 agent 评审可能需要几分钟...");
@@ -46,11 +61,35 @@ form.addEventListener("submit", async (event) => {
     if (!response.ok) {
       throw new Error(data.error || "Review failed");
     }
+    currentReviewTaskId = data.task_id;
     pollReviewTask(data.task_id);
   } catch (error) {
     renderMessage(`评审失败：${error.message}`, "error");
     markAgentsError();
     setRunning(false);
+  }
+});
+
+revisionPlanButton.addEventListener("click", async () => {
+  if (!currentReviewTaskId) return;
+  setRevisionRunning(true);
+  renderRevisionAgentPlaceholders();
+  showRevisionShell("正在读取原始论文和后台 Markdown 评审结果，生成可视化修改计划...");
+  try {
+    const response = await fetch("/api/revision-plan/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_task_id: currentReviewTaskId }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Revision plan failed");
+    }
+    pollRevisionPlanTask(data.task_id);
+  } catch (error) {
+    renderMessage(`修改计划生成失败：${error.message}`, "error");
+    markAgentsError();
+    setRevisionRunning(false);
   }
 });
 
@@ -85,21 +124,53 @@ async function pollReviewTask(taskId) {
   }
 }
 
+async function pollRevisionPlanTask(taskId) {
+  if (pollTimer) clearTimeout(pollTimer);
+  try {
+    const response = await fetch(`/api/revision-plan/status?id=${encodeURIComponent(taskId)}`);
+    const task = await response.json();
+    if (!response.ok) {
+      throw new Error(task.error || "Revision plan status failed");
+    }
+    renderProgress(task);
+    if (task.status === "complete") {
+      currentRevisionPlan = task.result;
+      renderRevisionPlan(currentRevisionPlan);
+      setRevisionRunning(false);
+      return;
+    }
+    if (task.status === "error") {
+      renderMessage(`修改计划生成失败：${task.error}`, "error");
+      markAgentsError();
+      setRevisionRunning(false);
+      return;
+    }
+    pollTimer = setTimeout(() => pollRevisionPlanTask(taskId), 1200);
+  } catch (error) {
+    renderMessage(`修改计划进度获取失败：${error.message}`, "error");
+    setRevisionRunning(false);
+  }
+}
+
 copyButton.addEventListener("click", async () => {
+  if (activeView === "revision" && currentRevisionPlan) {
+    await navigator.clipboard.writeText(currentRevisionPlan.markdown || "");
+    return;
+  }
   const agent = getActiveAgent();
   if (!agent) return;
   await navigator.clipboard.writeText(agent.markdown);
 });
 
 downloadMdButton.addEventListener("click", () => {
-  if (!currentResult) return;
-  const content = buildAllMarkdown(currentResult);
+  if (!currentResult && !currentRevisionPlan) return;
+  const content = activeView === "revision" && currentRevisionPlan ? currentRevisionPlan.markdown : buildAllMarkdown(currentResult);
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  downloadBlob(blob, "ai-paper-review-report.md");
+  downloadBlob(blob, activeView === "revision" ? "ai-paper-revision-plan.md" : "ai-paper-review-report.md");
 });
 
 downloadPdfButton.addEventListener("click", async () => {
-  if (!currentResult) return;
+  if (!currentResult || activeView !== "review") return;
   downloadPdfButton.disabled = true;
   downloadPdfButton.textContent = "正在生成 PDF...";
   try {
@@ -124,13 +195,35 @@ downloadPdfButton.addEventListener("click", async () => {
 
 function setRunning(running) {
   runButton.disabled = running;
+  revisionPlanButton.disabled = running || !currentReviewTaskId;
   runButton.innerHTML = running
     ? '<span class="button-icon">●</span> 正在评审'
     : '<span class="button-icon">▶</span> 开始多 Agent 评审';
 }
 
+function setRevisionRunning(running) {
+  runButton.disabled = running;
+  revisionPlanButton.disabled = running || !currentReviewTaskId;
+  revisionPlanButton.textContent = running ? "正在生成修改计划..." : "继续生成修改计划";
+}
+
 function renderAgentPlaceholders() {
   agentLane.innerHTML = startingAgents
+    .map(
+      ([id, label], index) => `
+      <article class="agent-card ${index === 0 ? "running" : "idle"}" data-agent="${id}">
+        <div class="agent-top">
+          <span class="status-dot"></span>
+          <strong>${escapeHtml(label)}</strong>
+        </div>
+        <p>${index === 0 ? "正在处理" : "等待中"}</p>
+      </article>`
+    )
+    .join("");
+}
+
+function renderRevisionAgentPlaceholders() {
+  agentLane.innerHTML = revisionAgents
     .map(
       ([id, label], index) => `
       <article class="agent-card ${index === 0 ? "running" : "idle"}" data-agent="${id}">
@@ -186,6 +279,7 @@ function markAgentsError() {
 }
 
 function renderResult(data) {
+  activeView = "review";
   const profile = data.profile;
   paperTitle.textContent = profile.title || "Untitled Manuscript";
   summaryMetrics.innerHTML = `
@@ -226,7 +320,207 @@ function renderResult(data) {
   copyButton.disabled = false;
   downloadMdButton.disabled = false;
   downloadPdfButton.disabled = false;
+  revisionPlanButton.disabled = false;
   renderActiveReport();
+}
+
+function showRevisionShell(message) {
+  activeView = "revision";
+  paperTitle.textContent = currentResult?.profile?.title
+    ? `${currentResult.profile.title} · 修改计划`
+    : "论文修改计划";
+  summaryMetrics.innerHTML = `
+    <div><span>2</span><small>阶段 / Step</small></div>
+    <div><span>${revisionAgents.length}</span><small>Agents</small></div>
+    <div><span>-</span><small>节点 / Nodes</small></div>
+    <div><span>运行中</span><small>Status</small></div>
+  `;
+  tabs.innerHTML = "";
+  copyButton.disabled = true;
+  downloadMdButton.disabled = true;
+  downloadPdfButton.disabled = true;
+  reportOutput.innerHTML = `
+    <div class="empty-state">
+      ${escapeHtml(message)}
+    </div>
+  `;
+}
+
+function renderRevisionPlan(data) {
+  activeView = "revision";
+  const plan = data.plan || {};
+  const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
+  paperTitle.textContent = plan.title || "论文修改计划";
+  summaryMetrics.innerHTML = `
+    <div><span>${escapeHtml(data.source_review?.decision || "-")}</span><small>原评审决策</small></div>
+    <div><span>${nodes.length}</span><small>修改节点</small></div>
+    <div><span>${countCriticalNodes(nodes)}</span><small>Critical</small></div>
+    <div><span>${escapeHtml(data.provider || "openai")}</span><small>Provider</small></div>
+  `;
+  tabs.innerHTML = `
+    <button type="button" class="active">修改流程图</button>
+    <button type="button" id="showReviewReportTab">返回评审报告</button>
+  `;
+  const backButton = document.querySelector("#showReviewReportTab");
+  if (backButton) {
+    backButton.addEventListener("click", () => {
+      if (currentResult) renderResult(currentResult);
+    });
+  }
+  copyButton.disabled = false;
+  downloadMdButton.disabled = false;
+  downloadPdfButton.disabled = true;
+  reportOutput.innerHTML = buildRevisionPlanHtml(plan);
+}
+
+function buildRevisionPlanHtml(plan) {
+  const lanes = Array.isArray(plan.lanes) ? plan.lanes : [];
+  const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
+  const nodesByLane = new Map();
+  nodes.forEach((node) => {
+    const lane = node.lane || "writing";
+    if (!nodesByLane.has(lane)) nodesByLane.set(lane, []);
+    nodesByLane.get(lane).push(node);
+  });
+  const laneHtml = lanes
+    .map((lane) => {
+      const laneNodes = nodesByLane.get(lane.id) || [];
+      return `
+        <section class="flow-lane">
+          <div class="flow-lane-title">${escapeHtml(lane.label || lane.id)}</div>
+          <div class="flow-lane-stack">
+            ${laneNodes.map((node) => revisionNodeHtml(node)).join("") || '<div class="flow-empty">暂无节点</div>'}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+  return `
+    <div class="revision-board">
+      <header class="revision-hero">
+        <div>
+          <span class="report-kicker">Revision Workflow / 修改工作流</span>
+          <h3>${escapeHtml(plan.title || "论文修改计划")}</h3>
+          <p>${escapeHtml(plan.priority_summary || "")}</p>
+        </div>
+        <div class="revision-legend">
+          <span class="priority-critical">Critical</span>
+          <span class="priority-major">Major</span>
+          <span class="priority-minor">Minor</span>
+        </div>
+      </header>
+      <div class="timeline-strip">
+        ${(plan.timeline || []).map((stage) => timelineStageHtml(stage)).join("")}
+      </div>
+      <div class="flow-board">
+        ${laneHtml}
+      </div>
+      ${authorInputsHtml(plan.author_inputs || [])}
+      ${riskControlsHtml(plan.risk_controls || [])}
+    </div>
+  `;
+}
+
+function revisionNodeHtml(node) {
+  const depends = Array.isArray(node.depends_on) && node.depends_on.length
+    ? node.depends_on.join(", ")
+    : "无";
+  const actions = Array.isArray(node.actions) ? node.actions : [];
+  return `
+    <article class="revision-node ${priorityClass(node.priority)}">
+      <div class="node-topline">
+        <span class="node-id">${escapeHtml(node.id || "")}</span>
+        <span class="node-phase">Phase ${escapeHtml(node.phase || "-")}</span>
+      </div>
+      <h4>${escapeHtml(node.title_zh || "")}</h4>
+      <p class="node-en">${escapeHtml(node.title_en || "")}</p>
+      <p class="node-objective">${escapeHtml(node.objective || "")}</p>
+      <div class="node-meta">
+        <span>${escapeHtml(node.priority || "Major")}</span>
+        <span>依赖：${escapeHtml(depends)}</span>
+      </div>
+      <dl>
+        <div>
+          <dt>原文位置</dt>
+          <dd>${escapeHtml(node.manuscript_target || "-")}</dd>
+        </div>
+        <div>
+          <dt>交付物</dt>
+          <dd>${escapeHtml(node.deliverable || "-")}</dd>
+        </div>
+      </dl>
+      <ul>
+        ${actions.slice(0, 4).map((action) => `<li>${escapeHtml(action)}</li>`).join("")}
+      </ul>
+      <div class="node-evidence">${escapeHtml(node.evidence_from_review || "")}</div>
+    </article>
+  `;
+}
+
+function timelineStageHtml(stage) {
+  const ids = Array.isArray(stage.node_ids) ? stage.node_ids.join(" · ") : "";
+  return `
+    <article>
+      <strong>${escapeHtml(stage.stage || "")}</strong>
+      <span>${escapeHtml(stage.focus || "")}</span>
+      <small>${escapeHtml(ids)}</small>
+    </article>
+  `;
+}
+
+function authorInputsHtml(items) {
+  if (!items.length) return "";
+  return `
+    <section class="revision-panel attention">
+      <h4>需要作者补充 / Author Inputs</h4>
+      <div class="panel-grid">
+        ${items
+          .map(
+            (item) => `
+            <article>
+              <strong>${escapeHtml(item.needed_for || "")}</strong>
+              <p>${escapeHtml(item.item || "")}</p>
+              <small>${escapeHtml(item.reason || "")}</small>
+            </article>
+          `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function riskControlsHtml(items) {
+  if (!items.length) return "";
+  return `
+    <section class="revision-panel">
+      <h4>风险控制 / Risk Controls</h4>
+      <div class="panel-grid">
+        ${items
+          .map(
+            (item) => `
+            <article>
+              <strong>${escapeHtml(item.risk || "")}</strong>
+              <p>${escapeHtml(item.control || "")}</p>
+              <small>${escapeHtml((item.related_nodes || []).join(" · "))}</small>
+            </article>
+          `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function priorityClass(priority) {
+  const value = String(priority || "").toLowerCase();
+  if (value.includes("critical")) return "priority-critical";
+  if (value.includes("minor")) return "priority-minor";
+  return "priority-major";
+}
+
+function countCriticalNodes(nodes) {
+  return nodes.filter((node) => String(node.priority || "").toLowerCase().includes("critical")).length;
 }
 
 function renderActiveReport() {
@@ -402,11 +696,12 @@ function formatRecommendation(value) {
 }
 
 function decisionClass(value) {
-  const lower = String(value || "").toLowerCase();
-  if (lower.includes("accept") || value.includes("接收")) return "decision-accept";
-  if (lower.includes("minor") || value.includes("小修")) return "decision-minor";
-  if (lower.includes("major") || value.includes("大修")) return "decision-major";
-  if (lower.includes("reject") || value.includes("拒稿")) return "decision-reject";
+  const text = String(value || "");
+  const lower = text.toLowerCase();
+  if (lower.includes("accept") || text.includes("接收")) return "decision-accept";
+  if (lower.includes("minor") || text.includes("小修")) return "decision-minor";
+  if (lower.includes("major") || text.includes("大修")) return "decision-major";
+  if (lower.includes("reject") || text.includes("拒稿")) return "decision-reject";
   return "";
 }
 

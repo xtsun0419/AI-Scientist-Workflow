@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reviewer_engine import read_text_from_upload, run_review
+from revision_engine import run_revision_plan
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -34,7 +35,16 @@ AGENT_ORDER = [
     ("synthesizer", "编辑综合 / Editorial Synthesizer"),
 ]
 
+REVISION_AGENT_ORDER = [
+    ("revision_intake", "评审解析 / Revision Intake"),
+    ("structure_architect", "结构设计 / Structure Architect"),
+    ("argument_builder", "论证强化 / Argument Builder"),
+    ("citation_compliance", "证据引用 / Citation Compliance"),
+    ("revision_coach", "修改教练 / Revision Coach"),
+]
+
 TASKS: dict[str, dict] = {}
+REVISION_TASKS: dict[str, dict] = {}
 TASK_LOCK = threading.Lock()
 
 
@@ -58,6 +68,9 @@ class ReviewerHandler(BaseHTTPRequestHandler):
         if path == "/api/review/status":
             self._handle_review_status()
             return
+        if path == "/api/revision-plan/status":
+            self._handle_revision_plan_status()
+            return
         if path in {"/", "/index.html"}:
             self._send_file(STATIC_DIR / "index.html")
             return
@@ -75,6 +88,9 @@ class ReviewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/review/start":
             self._handle_review_start()
+            return
+        if path == "/api/revision-plan/start":
+            self._handle_revision_plan_start()
             return
         if path != "/api/review":
             self._send_json({"error": "Not found"}, status=404)
@@ -94,12 +110,43 @@ class ReviewerHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
 
     def _handle_review_status(self) -> None:
-        query = urlparse(self.path).query
-        params = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
-        task_id = params.get("id", "")
+        task_id = get_query_id(self.path)
         with TASK_LOCK:
             task = TASKS.get(task_id)
-            payload = json.loads(json.dumps(task, ensure_ascii=False)) if task else None
+            payload = public_task_payload(task) if task else None
+        if not payload:
+            self._send_json({"error": "Task not found"}, status=404)
+            return
+        self._send_json(payload)
+
+    def _handle_revision_plan_start(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            review_task_id = body.get("review_task_id", "")
+            with TASK_LOCK:
+                review_task = TASKS.get(review_task_id)
+                if not review_task or review_task.get("status") != "complete":
+                    raise ValueError("请先完成一轮论文评审，再生成修改计划。")
+                manuscript_text = review_task.get("manuscript_text", "")
+                review_result = review_task.get("result")
+            if not manuscript_text or not review_result:
+                raise ValueError("上一轮评审任务缺少原文或评审结果，无法生成修改计划。")
+            backend_config = load_backend_config()
+            options = {
+                **backend_config,
+                "provider": backend_config.get("provider") or review_result.get("provider") or "openai",
+            }
+            task_id = start_revision_plan_task(manuscript_text, review_result, options)
+            self._send_json({"task_id": task_id})
+        except Exception as exc:
+            self._send_json({"error": str(exc)}, status=400)
+
+    def _handle_revision_plan_status(self) -> None:
+        task_id = get_query_id(self.path)
+        with TASK_LOCK:
+            task = REVISION_TASKS.get(task_id)
+            payload = public_task_payload(task) if task else None
         if not payload:
             self._send_json({"error": "Task not found"}, status=404)
             return
@@ -209,6 +256,20 @@ def make_initial_agents() -> list[dict]:
     ]
 
 
+def make_initial_revision_agents() -> list[dict]:
+    return [
+        {
+            "id": agent_id,
+            "label": label,
+            "status": "pending",
+            "message": "等待中",
+            "recommendation": "",
+            "confidence": None,
+        }
+        for agent_id, label in REVISION_AGENT_ORDER
+    ]
+
+
 def start_review_task(text: str, options: dict) -> str:
     task_id = uuid.uuid4().hex
     with TASK_LOCK:
@@ -218,6 +279,7 @@ def start_review_task(text: str, options: dict) -> str:
             "created_at": time.time(),
             "updated_at": time.time(),
             "agents": make_initial_agents(),
+            "manuscript_text": text,
             "result": None,
             "error": None,
         }
@@ -250,9 +312,60 @@ def run_review_task(task_id: str, text: str, options: dict) -> None:
             task["updated_at"] = time.time()
 
 
-def update_task_agent(task_id: str, agent_id: str, status: str, **extra: object) -> None:
+def start_revision_plan_task(manuscript_text: str, review_result: dict, options: dict) -> str:
+    task_id = uuid.uuid4().hex
     with TASK_LOCK:
-        task = TASKS.get(task_id)
+        REVISION_TASKS[task_id] = {
+            "task_id": task_id,
+            "status": "running",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "agents": make_initial_revision_agents(),
+            "result": None,
+            "error": None,
+        }
+    thread = threading.Thread(
+        target=run_revision_plan_task,
+        args=(task_id, manuscript_text, review_result, options),
+        daemon=True,
+    )
+    thread.start()
+    return task_id
+
+
+def run_revision_plan_task(task_id: str, manuscript_text: str, review_result: dict, options: dict) -> None:
+    def progress(agent_id: str, status: str, **extra: object) -> None:
+        update_task_agent(task_id, agent_id, status, task_store=REVISION_TASKS, **extra)
+
+    try:
+        result = run_revision_plan(manuscript_text, review_result, options, progress=progress)
+        with TASK_LOCK:
+            task = REVISION_TASKS[task_id]
+            task["status"] = "complete"
+            task["result"] = result
+            task["agents"] = normalize_agents_from_result(result, task["agents"])
+            task["updated_at"] = time.time()
+    except Exception as exc:
+        with TASK_LOCK:
+            task = REVISION_TASKS[task_id]
+            task["status"] = "error"
+            task["error"] = str(exc)
+            for agent in task["agents"]:
+                if agent["status"] == "running":
+                    agent["status"] = "error"
+                    agent["message"] = "运行失败"
+            task["updated_at"] = time.time()
+
+
+def update_task_agent(
+    task_id: str,
+    agent_id: str,
+    status: str,
+    task_store: dict[str, dict] | None = None,
+    **extra: object,
+) -> None:
+    with TASK_LOCK:
+        task = (task_store or TASKS).get(task_id)
         if not task:
             return
         for agent in task["agents"]:
@@ -265,6 +378,20 @@ def update_task_agent(task_id: str, agent_id: str, status: str, **extra: object)
                     agent["confidence"] = extra["confidence"]
                 break
         task["updated_at"] = time.time()
+
+
+def get_query_id(path: str) -> str:
+    query = urlparse(path).query
+    params = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
+    return params.get("id", "")
+
+
+def public_task_payload(task: dict | None) -> dict | None:
+    if not task:
+        return None
+    payload = json.loads(json.dumps(task, ensure_ascii=False))
+    payload.pop("manuscript_text", None)
+    return payload
 
 
 def normalize_agents_from_result(result: dict, current_agents: list[dict]) -> list[dict]:

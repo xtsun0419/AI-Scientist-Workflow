@@ -41,6 +41,7 @@ http://127.0.0.1:8765
 - 前端以可视化 HTML 报告展示评审结果，不再直接显示纯 Markdown。
 - 支持下载 Markdown 和 PDF；PDF 由后端使用 XeLaTeX 生成，适合阅读和分享。
 - 评审运行采用后台任务 + 前端轮询。每个 agent 开始、完成或失败都会单独更新卡片状态。
+- 评审完成后可继续生成“修改计划 / Revision Plan”，由后端读取原始论文和 Markdown 评审结果，再以前端泳道流程图展示。
 
 ## 接真实 LLM
 
@@ -78,6 +79,18 @@ academic-research-skills-main/academic-paper-reviewer/agents/
 这样后续改 prompt 不需要改前端。
 
 LLM 分支也会显式要求模型用中文写具体评审意见，同时允许标题、角色名和技术术语中英并列。
+
+## 修改计划
+
+点击“继续生成修改计划”后，系统会调用第二组写作/修改 agents：
+
+- Revision Intake：把多 agent 评审意见拆成可执行问题清单。
+- Structure Architect：规划章节结构和论证顺序调整。
+- Argument Builder：收紧核心论点和贡献表达。
+- Citation Compliance：标出证据、引用和作者必须补充的信息。
+- Revision Coach：综合生成可视化修改流程。
+
+这一阶段使用后台保存的 Markdown 评审结果，不读取 PDF。PDF 只作为人工阅读和分享格式。
 
 ## SSL 证书错误
 
