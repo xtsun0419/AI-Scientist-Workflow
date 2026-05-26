@@ -5,7 +5,8 @@
 ## 启动
 
 ```bash
-cd /Users/sunxutao/Documents/Codex/AI_paper_reviewer
+git clone https://github.com/xtsun0419/AI-Scientist-Workflow.git
+cd AI-Scientist-Workflow
 python3 app/server.py
 ```
 
@@ -34,7 +35,7 @@ http://127.0.0.1:8765
   - Perspective Reviewer
   - Devil's Advocate
 - Editorial Synthesizer 汇总决策和修改路线图。
-- 默认使用网页中填写的 OpenAI-compatible API，适合获得实质性审稿内容。
+- 默认使用后端 `app/config.json` 中的 OpenAI-compatible API 配置，适合获得实质性审稿内容。
 - `流程演示 / Local demo` 只用于无 API key 时检查界面和流程，不代表真正的全文深读审稿。
 - 具体评审意见、问题、修改建议和 revision roadmap 默认使用中文输出；题目、角色名、方法名和技术术语可保留中英并列。
 - 前端以可视化 HTML 报告展示评审结果，不再直接显示纯 Markdown。
@@ -48,7 +49,6 @@ http://127.0.0.1:8765
 复制并编辑：
 
 ```bash
-cd /Users/sunxutao/Documents/Codex/AI_paper_reviewer
 cp app/config.example.json app/config.json
 ```
 
@@ -58,14 +58,13 @@ cp app/config.example.json app/config.json
 - API Key
 - Model
 
-`app/config.json` 已加入 `.gitignore`，避免误提交 key。网页左侧仍可临时覆盖 Base URL 和模型名，但不再接收 API Key。
+`app/config.json` 已加入 `.gitignore`，避免误提交 key。前端不显示 API Key、Base URL 或模型输入框，凭据只保存在后端配置或本机环境变量中。
 
 也可以启动服务前设置 OpenAI-compatible 环境变量作为默认值：
 
 ```bash
 export OPENAI_API_KEY="..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"
-export OPENAI_MODEL="gpt-4o-mini"
 export OPENAI_MODEL="gpt-4o-mini"
 python3 app/server.py
 ```

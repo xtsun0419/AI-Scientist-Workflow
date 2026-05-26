@@ -13,7 +13,8 @@
 ## 启动
 
 ```bash
-cd /Users/sunxutao/Documents/Codex/AI_paper_reviewer
+git clone https://github.com/xtsun0419/AI-Scientist-Workflow.git
+cd AI-Scientist-Workflow
 python3 app/server.py
 ```
 
