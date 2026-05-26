@@ -1,5 +1,7 @@
 const form = document.querySelector("#reviewForm");
+const revisionImportForm = document.querySelector("#revisionImportForm");
 const runButton = document.querySelector("#runButton");
+const importRevisionButton = document.querySelector("#importRevisionButton");
 const reportOutput = document.querySelector("#reportOutput");
 const agentLane = document.querySelector("#agentLane");
 const tabs = document.querySelector("#tabs");
@@ -72,6 +74,10 @@ form.addEventListener("submit", async (event) => {
 
 revisionPlanButton.addEventListener("click", async () => {
   if (!currentReviewTaskId) return;
+  if (currentRevisionPlan) {
+    renderRevisionPlan(currentRevisionPlan);
+    return;
+  }
   setRevisionRunning(true);
   renderRevisionAgentPlaceholders();
   showRevisionShell("正在读取原始论文和后台 Markdown 评审结果，生成可视化修改计划...");
@@ -88,6 +94,43 @@ revisionPlanButton.addEventListener("click", async () => {
     pollRevisionPlanTask(data.task_id);
   } catch (error) {
     renderMessage(`修改计划生成失败：${error.message}`, "error");
+    markAgentsError();
+    setRevisionRunning(false);
+  }
+});
+
+revisionImportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(revisionImportForm);
+  const manuscriptFile = formData.get("manuscript_file");
+  const reviewFile = formData.get("review_markdown_file");
+  if (!(manuscriptFile instanceof File) || !manuscriptFile.name) {
+    renderMessage("请先上传原始论文文件。", "error");
+    return;
+  }
+  if (!(reviewFile instanceof File) || !reviewFile.name) {
+    renderMessage("请上传上次下载的评审 Markdown 文件。", "error");
+    return;
+  }
+  currentResult = null;
+  currentReviewTaskId = null;
+  currentRevisionPlan = null;
+  activeView = "revision";
+  setRevisionRunning(true);
+  renderRevisionAgentPlaceholders();
+  showRevisionShell("正在读取原始论文和评审 Markdown，直接生成可视化修改计划...");
+  try {
+    const response = await fetch("/api/revision-plan/import", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Revision import failed");
+    }
+    pollRevisionPlanTask(data.task_id);
+  } catch (error) {
+    renderMessage(`导入评审 Markdown 失败：${error.message}`, "error");
     markAgentsError();
     setRevisionRunning(false);
   }
@@ -195,6 +238,7 @@ downloadPdfButton.addEventListener("click", async () => {
 
 function setRunning(running) {
   runButton.disabled = running;
+  importRevisionButton.disabled = running;
   revisionPlanButton.disabled = running || !currentReviewTaskId;
   runButton.innerHTML = running
     ? '<span class="button-icon">●</span> 正在评审'
@@ -203,8 +247,12 @@ function setRunning(running) {
 
 function setRevisionRunning(running) {
   runButton.disabled = running;
-  revisionPlanButton.disabled = running || !currentReviewTaskId;
+  importRevisionButton.disabled = running;
+  revisionPlanButton.disabled = running || (!currentReviewTaskId && !currentRevisionPlan);
   revisionPlanButton.textContent = running ? "正在生成修改计划..." : "继续生成修改计划";
+  importRevisionButton.innerHTML = running
+    ? '<span class="button-icon">●</span> 正在生成'
+    : '<span class="button-icon">↳</span> 导入并生成修改计划';
 }
 
 function renderAgentPlaceholders() {
@@ -321,6 +369,7 @@ function renderResult(data) {
   downloadMdButton.disabled = false;
   downloadPdfButton.disabled = false;
   revisionPlanButton.disabled = false;
+  revisionPlanButton.textContent = currentRevisionPlan ? "查看修改计划" : "继续生成修改计划";
   renderActiveReport();
 }
 
@@ -359,7 +408,7 @@ function renderRevisionPlan(data) {
   `;
   tabs.innerHTML = `
     <button type="button" class="active">修改流程图</button>
-    <button type="button" id="showReviewReportTab">返回评审报告</button>
+    ${currentResult ? '<button type="button" id="showReviewReportTab">返回评审报告</button>' : ""}
   `;
   const backButton = document.querySelector("#showReviewReportTab");
   if (backButton) {
@@ -370,6 +419,8 @@ function renderRevisionPlan(data) {
   copyButton.disabled = false;
   downloadMdButton.disabled = false;
   downloadPdfButton.disabled = true;
+  revisionPlanButton.disabled = false;
+  revisionPlanButton.textContent = "查看修改计划";
   reportOutput.innerHTML = buildRevisionPlanHtml(plan);
 }
 

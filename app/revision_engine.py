@@ -62,6 +62,73 @@ def build_review_markdown(review_result: dict[str, Any]) -> str:
     )
 
 
+def review_result_from_markdown(markdown: str, title: str = "Imported Review Report") -> dict[str, Any]:
+    markdown = markdown.strip()
+    sections = split_review_markdown(markdown)
+    agents = []
+    for index, section in enumerate(sections, start=1):
+        label = section["label"] or f"Imported Review Section {index}"
+        recommendation = extract_imported_recommendation(section["markdown"])
+        agents.append(
+            {
+                "id": f"imported_{index}",
+                "label": label,
+                "status": "complete",
+                "recommendation": recommendation,
+                "confidence": 4,
+                "markdown": section["markdown"],
+            }
+        )
+    if not agents:
+        agents.append(
+            {
+                "id": "imported_review",
+                "label": "Imported Review Report",
+                "status": "complete",
+                "recommendation": extract_imported_recommendation(markdown),
+                "confidence": 4,
+                "markdown": markdown,
+            }
+        )
+    decision = extract_imported_recommendation(markdown)
+    return {
+        "provider": "imported-markdown",
+        "mode": "imported",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "profile": {"title": title},
+        "agents": agents,
+        "summary": {
+            "decision": decision,
+            "confidence": 4,
+            "markdown": markdown,
+        },
+    }
+
+
+def split_review_markdown(markdown: str) -> list[dict[str, str]]:
+    chunks = [chunk.strip() for chunk in re.split(r"\n\s*---+\s*\n", markdown) if chunk.strip()]
+    sections = []
+    for chunk in chunks:
+        heading = re.search(r"^\s*#\s+(.+)$", chunk, re.M)
+        label = heading.group(1).strip() if heading else ""
+        sections.append({"label": label, "markdown": chunk})
+    return sections
+
+
+def extract_imported_recommendation(markdown: str) -> str:
+    text = markdown or ""
+    patterns = [
+        ("Reject", [r"\bReject\b", "拒稿", "拒绝", "退稿", "不建议接收"]),
+        ("Major Revision", [r"\bMajor Revision\b", "大修", "重大修改", "大幅修改"]),
+        ("Minor Revision", [r"\bMinor Revision\b", "小修", "轻微修改"]),
+        ("Accept", [r"\bAccept\b", "接收", "接受", "录用"]),
+    ]
+    for rec, rec_patterns in patterns:
+        if any(re.search(pattern, text, re.I) for pattern in rec_patterns):
+            return rec
+    return "Major Revision"
+
+
 def run_revision_plan(
     manuscript_text: str,
     review_result: dict[str, Any],

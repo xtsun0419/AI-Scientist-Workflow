@@ -87,6 +87,17 @@ textarea {
   gap: 16px;
 }
 
+.secondary-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+.secondary-panel h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
 .field,
 .field-row {
   display: flex;
@@ -153,8 +164,25 @@ textarea:focus {
   gap: 8px;
 }
 
-#runButton:disabled {
+#importRevisionButton {
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 750;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#runButton:disabled,
+#importRevisionButton:disabled {
   background: #93a7c4;
+  border-color: #93a7c4;
+  color: #fff;
   cursor: not-allowed;
 }
 

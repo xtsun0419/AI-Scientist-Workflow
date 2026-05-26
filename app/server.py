@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reviewer_engine import read_text_from_upload, run_review
-from revision_engine import run_revision_plan
+from revision_engine import review_result_from_markdown, run_revision_plan
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -92,6 +92,9 @@ class ReviewerHandler(BaseHTTPRequestHandler):
         if path == "/api/revision-plan/start":
             self._handle_revision_plan_start()
             return
+        if path == "/api/revision-plan/import":
+            self._handle_revision_plan_import()
+            return
         if path != "/api/review":
             self._send_json({"error": "Not found"}, status=404)
             return
@@ -137,6 +140,15 @@ class ReviewerHandler(BaseHTTPRequestHandler):
                 **backend_config,
                 "provider": backend_config.get("provider") or review_result.get("provider") or "openai",
             }
+            task_id = start_revision_plan_task(manuscript_text, review_result, options)
+            self._send_json({"task_id": task_id})
+        except Exception as exc:
+            self._send_json({"error": str(exc)}, status=400)
+
+    def _handle_revision_plan_import(self) -> None:
+        try:
+            manuscript_text, review_markdown, options = self._parse_revision_import_request()
+            review_result = review_result_from_markdown(review_markdown, title=infer_imported_title(manuscript_text))
             task_id = start_revision_plan_task(manuscript_text, review_result, options)
             self._send_json({"task_id": task_id})
         except Exception as exc:
@@ -197,6 +209,35 @@ class ReviewerHandler(BaseHTTPRequestHandler):
             raise ValueError("Please upload or paste at least 100 characters of manuscript text.")
         options = {**backend_config, **{k: v for k, v in options.items() if v not in {"", None}}}
         return text, options
+
+    def _parse_revision_import_request(self) -> tuple[str, str, dict]:
+        backend_config = load_backend_config()
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
+            },
+        )
+        manuscript_text = ""
+        manuscript_item = form["manuscript_file"] if "manuscript_file" in form else None
+        if manuscript_item is not None and getattr(manuscript_item, "filename", ""):
+            manuscript_text = read_text_from_upload(manuscript_item.filename, manuscript_item.file.read())
+        review_markdown = ""
+        review_item = form["review_markdown_file"] if "review_markdown_file" in form else None
+        if review_item is not None and getattr(review_item, "filename", ""):
+            review_markdown = read_text_from_upload(review_item.filename, review_item.file.read())
+        if not manuscript_text or len(manuscript_text.strip()) < 100:
+            raise ValueError("请上传至少 100 个字符的原始论文文件。")
+        if not review_markdown or len(review_markdown.strip()) < 100:
+            raise ValueError("请上传上一轮评审 Markdown 文件。")
+        options = {
+            **backend_config,
+            "provider": backend_config.get("provider") or "openai",
+        }
+        return manuscript_text, review_markdown, options
 
     def _handle_pdf_export(self) -> None:
         try:
@@ -384,6 +425,14 @@ def get_query_id(path: str) -> str:
     query = urlparse(path).query
     params = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
     return params.get("id", "")
+
+
+def infer_imported_title(text: str) -> str:
+    for line in text.splitlines():
+        candidate = line.strip(" #\t")
+        if 8 <= len(candidate) <= 180 and not re.match(r"^(abstract|摘要|introduction|引言)\b", candidate, re.I):
+            return candidate
+    return "Imported Manuscript"
 
 
 def public_task_payload(task: dict | None) -> dict | None:

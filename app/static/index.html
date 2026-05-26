@@ -39,6 +39,28 @@
             开始多 Agent 评审
           </button>
         </form>
+
+        <form id="revisionImportForm" class="control-panel secondary-panel">
+          <div>
+            <h2>已有评审报告</h2>
+            <p class="field-help">上传原始论文和上次下载的 Markdown 评审报告，可直接生成修改计划，不必重新运行评审 agents。</p>
+          </div>
+
+          <div class="field">
+            <label for="revisionManuscriptInput">原始论文文件</label>
+            <input id="revisionManuscriptInput" name="manuscript_file" type="file" accept=".txt,.md,.markdown,.docx,.pdf" />
+          </div>
+
+          <div class="field">
+            <label for="reviewMarkdownInput">评审 Markdown 文件</label>
+            <input id="reviewMarkdownInput" name="review_markdown_file" type="file" accept=".txt,.md,.markdown" />
+          </div>
+
+          <button id="importRevisionButton" type="submit">
+            <span class="button-icon">↳</span>
+            导入并生成修改计划
+          </button>
+        </form>
       </aside>
 
       <main class="workspace">

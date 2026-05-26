@@ -1313,6 +1313,9 @@ def run_llm_review(
                     "content": (
                         "Output language requirement: write all concrete review comments, critique, questions, and revision suggestions in Chinese. "
                         "You may keep headings, manuscript title, role names, and technical terms in Chinese-English bilingual form.\n\n"
+                        "Required metadata: include a clearly labeled line near the top exactly like "
+                        "`Recommendation: Accept|Minor Revision|Major Revision|Reject` and another line "
+                        "`Confidence: 1-5`. Do not use `Review Complete` as a recommendation.\n\n"
                         f"Reviewer configuration:\n{field_report}\n\n"
                         f"Produce only your assigned review report. Manuscript:\n{text[:60000]}"
                     ),
@@ -1350,6 +1353,9 @@ def run_llm_review(
                 "content": (
                     "Output language requirement: write all concrete editorial synthesis, consensus analysis, and revision roadmap items in Chinese. "
                     "You may keep headings, manuscript title, role names, and technical terms in Chinese-English bilingual form.\n\n"
+                    "Required metadata: include a clearly labeled line near the top exactly like "
+                    "`Recommendation: Accept|Minor Revision|Major Revision|Reject` and another line "
+                    "`Confidence: 1-5`. Do not use `Review Complete` as a recommendation.\n\n"
                     f"Field analysis:\n{field_report}\n\nReviewer reports:\n{reviews_bundle}\n\n"
                     "Synthesize the reports into the editorial decision package."
                 ),
@@ -1476,16 +1482,52 @@ def normalize_base_url(base_url: str) -> str:
 
 
 def extract_recommendation(markdown: str) -> str:
+    text = markdown or ""
+    explicit = re.search(
+        r"(?:recommendation|建议|结论|decision|编辑决策)\s*[:：\-]\s*([^\n|]+)",
+        text,
+        re.I,
+    )
+    if explicit:
+        parsed = normalize_recommendation_label(explicit.group(1))
+        if parsed:
+            return parsed
+
+    heading_match = re.search(
+        r"(?:overall stress-test recommendation|overall recommendation|最终建议|总体建议)[\s\S]{0,160}",
+        text,
+        re.I,
+    )
+    if heading_match:
+        parsed = normalize_recommendation_label(heading_match.group(0))
+        if parsed:
+            return parsed
+
+    parsed = normalize_recommendation_label(text)
+    if parsed:
+        return parsed
+
+    if any(token in text for token in ["致命", "无法支持", "根本性缺陷", "严重不足", "不可接受"]):
+        return "Reject"
+    if any(token in text for token in ["主要问题", "重大问题", "必须修改", "关键问题", "大幅修改"]):
+        return "Major Revision"
+    if any(token in text for token in ["小问题", "轻微问题", "局部修改", "文字润色"]):
+        return "Minor Revision"
+    return "Major Revision"
+
+
+def normalize_recommendation_label(value: str) -> str | None:
+    text = value.strip()
     patterns = [
-        ("Reject", [r"\bReject\b", "拒稿", "拒绝", "退稿"]),
-        ("Major Revision", [r"\bMajor Revision\b", "大修", "重大修改"]),
-        ("Minor Revision", [r"\bMinor Revision\b", "小修", "轻微修改"]),
-        ("Accept", [r"\bAccept\b", "接收", "接受", "录用"]),
+        ("Reject", [r"\bReject\b", "拒稿", "拒绝", "退稿", "不建议接收", "不能接收"]),
+        ("Major Revision", [r"\bMajor Revision\b", "大修", "重大修改", "大幅修改", "major revisions"]),
+        ("Minor Revision", [r"\bMinor Revision\b", "小修", "轻微修改", "minor revisions"]),
+        ("Accept", [r"\bAccept\b", "接收", "接受", "录用", "建议接收"]),
     ]
     for rec, rec_patterns in patterns:
-        if any(re.search(pattern, markdown, re.I) for pattern in rec_patterns):
+        if any(re.search(pattern, text, re.I) for pattern in rec_patterns):
             return rec
-    return "Review Complete"
+    return None
 
 
 def extract_confidence(markdown: str) -> int:
