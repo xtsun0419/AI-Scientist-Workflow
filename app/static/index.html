@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Paper Reviewer</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AR</div>
+          <div>
+            <h1>AI Paper Reviewer</h1>
+            <p>多 Agent 投稿前评审 / Pre-submission review</p>
+          </div>
+        </div>
+
+        <form id="reviewForm" class="control-panel">
+          <div class="field">
+            <label for="fileInput">上传初稿</label>
+            <input id="fileInput" name="file" type="file" accept=".txt,.md,.markdown,.docx,.pdf" />
+          </div>
+
+          <div class="field">
+            <label for="modeInput">评审模式</label>
+            <select id="modeInput" name="mode">
+              <option value="full">完整评审 / Full panel</option>
+              <option value="quick">快速评审 / Quick</option>
+              <option value="methodology-focus">方法重点 / Methodology focus</option>
+            </select>
+          </div>
+
+          <p class="field-help">API Base URL、模型和 key 均从后端 app/config.json 读取。前端只负责上传文件和查看报告。</p>
+
+          <button id="runButton" type="submit">
+            <span class="button-icon">▶</span>
+            开始多 Agent 评审
+          </button>
+        </form>
+      </aside>
+
+      <main class="workspace">
+        <section class="summary-band">
+          <div>
+            <p class="eyebrow">Reviewer Console / 评审控制台</p>
+            <h2 id="paperTitle">等待上传初稿</h2>
+            <p class="confidence-note">置信度是每个评审角色对“自己这份判断可靠程度”的自评，1-5 分；它不是论文通过概率，也不是模型准确率。</p>
+          </div>
+          <div class="summary-metrics" id="summaryMetrics">
+            <div><span>-</span><small>决策 / Decision</small></div>
+            <div><span>-</span><small>词数 / Words</small></div>
+            <div><span>-</span><small>文献 / Refs</small></div>
+            <div><span>-</span><small>Agents</small></div>
+          </div>
+        </section>
+
+        <section class="agent-lane" id="agentLane" aria-live="polite">
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>领域分析 / Field Analyst</strong>
+            </div>
+            <p>上传论文后开始配置评审团队。</p>
+          </article>
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>主编 / Editor-in-Chief</strong>
+            </div>
+            <p>评估期刊匹配、原创性与整体质量。</p>
+          </article>
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>方法学 / Methodology</strong>
+            </div>
+            <p>评估研究设计、统计有效性与可复现性。</p>
+          </article>
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>领域专家 / Domain</strong>
+            </div>
+            <p>评估文献、理论框架与领域贡献。</p>
+          </article>
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>跨学科视角 / Perspective</strong>
+            </div>
+            <p>评估跨学科、实践与利益相关者视角。</p>
+          </article>
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>反方评审 / Devil's Advocate</strong>
+            </div>
+            <p>压力测试核心论证和最强反驳。</p>
+          </article>
+          <article class="agent-card idle">
+            <div class="agent-top">
+              <span class="status-dot"></span>
+              <strong>编辑综合 / Synthesizer</strong>
+            </div>
+            <p>汇总评审意见并生成修改路线图。</p>
+          </article>
+        </section>
+
+        <section class="tabs-section">
+          <div class="tabs" id="tabs"></div>
+          <div class="report-toolbar">
+            <button id="copyButton" type="button" disabled>复制当前报告</button>
+            <button id="downloadMdButton" type="button" disabled>下载 Markdown</button>
+            <button id="downloadPdfButton" type="button" disabled>下载 PDF</button>
+          </div>
+        </section>
+
+        <section class="report-panel">
+          <div id="reportOutput" class="visual-report">请先在后端 app/config.json 中配置 API Key，然后上传论文初稿开始评审。具体评审意见默认用中文输出，题目、角色名和技术术语可中英并列。</div>
+        </section>
+      </main>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
