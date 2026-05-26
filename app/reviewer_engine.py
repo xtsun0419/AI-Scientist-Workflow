@@ -1323,6 +1323,8 @@ def run_llm_review(
             ],
         )
         recommendation = extract_recommendation(content)
+        if recommendation == "Major Revision" and role == "devils_advocate":
+            recommendation = infer_devils_advocate_recommendation(content)
         confidence = extract_confidence(content)
         reviewer_results.append(
             {
@@ -1514,6 +1516,32 @@ def extract_recommendation(markdown: str) -> str:
     if any(token in text for token in ["小问题", "轻微问题", "局部修改", "文字润色"]):
         return "Minor Revision"
     return "Major Revision"
+
+
+def infer_devils_advocate_recommendation(markdown: str) -> str:
+    text = markdown or ""
+    explicit = normalize_recommendation_label(text)
+    if explicit:
+        return explicit
+    critical_count = count_severity_rows(text, "critical") + count_severity_rows(text, "致命")
+    major_count = count_severity_rows(text, "major") + count_severity_rows(text, "主要")
+    if critical_count > 0 or any(token in text for token in ["foundation collapse", "logic chain break", "data-conclusion mismatch", "核心论证崩塌", "致命缺陷"]):
+        return "Reject"
+    if major_count > 0 or any(token in text for token in ["strongest counter-argument", "最强反驳", "替代解释", "逻辑缺口", "证据缺口"]):
+        return "Major Revision"
+    if any(token in text for token in ["minor", "小问题", "局部", "措辞"]):
+        return "Minor Revision"
+    return "Major Revision"
+
+
+def count_severity_rows(text: str, severity: str) -> int:
+    section = re.search(rf"####\s*{re.escape(severity)}\b([\s\S]*?)(?=\n####|\n###|\Z)", text, re.I)
+    if not section:
+        return 0
+    body = section.group(1)
+    rows = [line for line in body.splitlines() if line.strip().startswith("|") and not re.search(r"^\|\s*-+", line)]
+    data_rows = [line for line in rows if not re.search(r"issue|description|问题|说明|location|位置", line, re.I)]
+    return len(data_rows)
 
 
 def normalize_recommendation_label(value: str) -> str | None:
