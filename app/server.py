@@ -583,10 +583,20 @@ def build_pdf(result: dict) -> bytes:
 def build_latex_report(result: dict) -> str:
     profile = result.get("profile", {})
     agents = result.get("agents", [])
+    report_type = result.get("report_type") or "review"
+    is_deep_research = report_type == "deep_research"
     title = latex_escape(profile.get("title") or "AI Paper Review Report")
     decision = latex_escape((result.get("summary") or {}).get("decision") or "")
     generated = latex_escape(result.get("created_at") or "")
     sections = "\n\n".join(agent_to_latex(agent) for agent in agents)
+    report_title = "Deep Research 研究规划报告" if is_deep_research else "AI 论文评审报告"
+    author = "Deep Research Agents" if is_deep_research else "Multi-agent Reviewer"
+    box_title = "研究规划 / Research Plan" if is_deep_research else "综合结论 / Decision"
+    note = (
+        "本报告用于研究规划；其中的文献、数据和证据仍需后续检索与验证。"
+        if is_deep_research
+        else "置信度是每个评审角色对自己判断可靠程度的自评，不是论文通过概率，也不是模型准确率。"
+    )
     return rf"""\documentclass[11pt,a4paper,fontset=none]{{ctexart}}
 \usepackage[margin=1.9cm]{{geometry}}
 \usepackage{{fontspec}}
@@ -617,15 +627,15 @@ def build_latex_report(result: dict) -> str:
 \setlist[enumerate]{{leftmargin=1.6em,itemsep=0.25em,topsep=0.25em}}
 \setlength{{\parindent}}{{0pt}}
 \setlength{{\parskip}}{{0.55em}}
-\title{{\textbf{{AI 论文评审报告}}\\[0.4em]\large {title}}}
-\author{{Multi-agent Reviewer}}
+\title{{\textbf{{{report_title}}}\\[0.4em]\large {title}}}
+\author{{{author}}}
 \date{{{generated}}}
 \begin{{document}}
 \maketitle
-\begin{{tcolorbox}}[enhanced,breakable,colback=reviewbg,colframe=reviewteal,boxrule=0.8pt,arc=2mm,title={{综合结论 / Decision}}]
+\begin{{tcolorbox}}[enhanced,breakable,colback=reviewbg,colframe=reviewteal,boxrule=0.8pt,arc=2mm,title={{{box_title}}}]
 \textbf{{{decision}}}
 
-置信度是每个评审角色对自己判断可靠程度的自评，不是论文通过概率，也不是模型准确率。
+{note}
 \end{{tcolorbox}}
 \tableofcontents
 \newpage

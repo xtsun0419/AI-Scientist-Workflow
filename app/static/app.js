@@ -8,9 +8,12 @@ const runButton = document.querySelector("#runButton");
 const importRevisionButton = document.querySelector("#importRevisionButton");
 const runDeepResearchButton = document.querySelector("#runDeepResearchButton");
 const reportOutput = document.querySelector("#reportOutput");
+const reportPanel = document.querySelector("#reportPanel");
 const agentLane = document.querySelector("#agentLane");
 const homeGrid = document.querySelector("#homeGrid");
 const tabs = document.querySelector("#tabs");
+const tabsSection = document.querySelector("#tabsSection");
+const reportToolbar = document.querySelector("#reportToolbar");
 const copyButton = document.querySelector("#copyButton");
 const downloadMdButton = document.querySelector("#downloadMdButton");
 const downloadPdfButton = document.querySelector("#downloadPdfButton");
@@ -26,6 +29,7 @@ let currentRevisionPlan = null;
 let currentDeepResearch = null;
 let activeAgentId = null;
 let activeView = "home";
+let runningWorkflow = null;
 let pollTimer = null;
 
 const startingAgents = [
@@ -54,13 +58,13 @@ const deepResearchAgents = [
   ["report_compiler", "报告大纲 / Report Compiler"],
 ];
 
-homeNavButton.addEventListener("click", () => showHome());
-deepResearchNavButton.addEventListener("click", () => showDeepResearch());
-reviewNavButton.addEventListener("click", () => showReviewer());
+homeNavButton.addEventListener("click", () => guardedWorkflowSwitch(() => showHome()));
+deepResearchNavButton.addEventListener("click", () => guardedWorkflowSwitch(() => showDeepResearch()));
+reviewNavButton.addEventListener("click", () => guardedWorkflowSwitch(() => showReviewer()));
 homeGrid.querySelectorAll(".home-card").forEach((card) => {
   card.addEventListener("click", () => {
-    if (card.dataset.target === "deep") showDeepResearch();
-    if (card.dataset.target === "review") showReviewer();
+    if (card.dataset.target === "deep") guardedWorkflowSwitch(() => showDeepResearch());
+    if (card.dataset.target === "review") guardedWorkflowSwitch(() => showReviewer());
   });
 });
 
@@ -76,7 +80,9 @@ form.addEventListener("submit", async (event) => {
 
   currentReviewTaskId = null;
   currentRevisionPlan = null;
+  currentResult = null;
   activeView = "review";
+  runningWorkflow = "review";
   setRunning(true);
   renderAgentPlaceholders();
   renderMessage("正在读取稿件并调用后端配置的外部 LLM API。完整多 agent 评审可能需要几分钟...");
@@ -96,6 +102,7 @@ form.addEventListener("submit", async (event) => {
     renderMessage(`评审失败：${error.message}`, "error");
     markAgentsError();
     setRunning(false);
+    runningWorkflow = null;
   }
 });
 
@@ -110,7 +117,11 @@ deepResearchForm.addEventListener("submit", async (event) => {
   }
   currentDeepResearch = null;
   activeView = "deep";
+  runningWorkflow = "deep";
   setDeepResearchRunning(true);
+  copyButton.disabled = true;
+  downloadMdButton.disabled = true;
+  downloadPdfButton.disabled = true;
   renderDeepResearchPlaceholders();
   renderMessage("正在调用 Deep Research agents。MVP 会依次生成研究问题、方法蓝图、文献策略、综合框架和报告大纲...");
   try {
@@ -128,6 +139,7 @@ deepResearchForm.addEventListener("submit", async (event) => {
     renderMessage(`Deep Research 失败：${error.message}`, "error");
     markAgentsError();
     setDeepResearchRunning(false);
+    runningWorkflow = null;
   }
 });
 
@@ -137,6 +149,7 @@ revisionPlanButton.addEventListener("click", async () => {
     renderRevisionPlan(currentRevisionPlan);
     return;
   }
+  runningWorkflow = "revision";
   setRevisionRunning(true);
   renderRevisionAgentPlaceholders();
   showRevisionShell("正在读取原始论文和后台 Markdown 评审结果，生成可视化修改计划...");
@@ -155,6 +168,7 @@ revisionPlanButton.addEventListener("click", async () => {
     renderMessage(`修改计划生成失败：${error.message}`, "error");
     markAgentsError();
     setRevisionRunning(false);
+    runningWorkflow = null;
   }
 });
 
@@ -175,6 +189,7 @@ revisionImportForm.addEventListener("submit", async (event) => {
   currentReviewTaskId = null;
   currentRevisionPlan = null;
   activeView = "revision";
+  runningWorkflow = "revision";
   setRevisionRunning(true);
   renderRevisionAgentPlaceholders();
   showRevisionShell("正在读取原始论文和评审 Markdown，直接生成可视化修改计划...");
@@ -192,6 +207,7 @@ revisionImportForm.addEventListener("submit", async (event) => {
     renderMessage(`导入评审 Markdown 失败：${error.message}`, "error");
     markAgentsError();
     setRevisionRunning(false);
+    runningWorkflow = null;
   }
 });
 
@@ -209,18 +225,21 @@ async function pollReviewTask(taskId) {
       activeAgentId = currentResult.agents[currentResult.agents.length - 1].id;
       renderResult(currentResult);
       setRunning(false);
+      runningWorkflow = null;
       return;
     }
     if (task.status === "error") {
       renderMessage(`评审失败：${task.error}`, "error");
       markAgentsError();
       setRunning(false);
+      runningWorkflow = null;
       return;
     }
     pollTimer = setTimeout(() => pollReviewTask(taskId), 1200);
   } catch (error) {
     renderMessage(`评审进度获取失败：${error.message}`, "error");
     setRunning(false);
+    runningWorkflow = null;
   } finally {
     // Completion and error branches stop the polling loop explicitly.
   }
@@ -239,18 +258,21 @@ async function pollRevisionPlanTask(taskId) {
       currentRevisionPlan = task.result;
       renderRevisionPlan(currentRevisionPlan);
       setRevisionRunning(false);
+      runningWorkflow = null;
       return;
     }
     if (task.status === "error") {
       renderMessage(`修改计划生成失败：${task.error}`, "error");
       markAgentsError();
       setRevisionRunning(false);
+      runningWorkflow = null;
       return;
     }
     pollTimer = setTimeout(() => pollRevisionPlanTask(taskId), 1200);
   } catch (error) {
     renderMessage(`修改计划进度获取失败：${error.message}`, "error");
     setRevisionRunning(false);
+    runningWorkflow = null;
   }
 }
 
@@ -267,18 +289,21 @@ async function pollDeepResearchTask(taskId) {
       currentDeepResearch = task.result;
       renderDeepResearchResult(currentDeepResearch);
       setDeepResearchRunning(false);
+      runningWorkflow = null;
       return;
     }
     if (task.status === "error") {
       renderMessage(`Deep Research 失败：${task.error}`, "error");
       markAgentsError();
       setDeepResearchRunning(false);
+      runningWorkflow = null;
       return;
     }
     pollTimer = setTimeout(() => pollDeepResearchTask(taskId), 1200);
   } catch (error) {
     renderMessage(`Deep Research 进度获取失败：${error.message}`, "error");
     setDeepResearchRunning(false);
+    runningWorkflow = null;
   }
 }
 
@@ -313,21 +338,22 @@ downloadMdButton.addEventListener("click", () => {
 });
 
 downloadPdfButton.addEventListener("click", async () => {
-  if (!currentResult || activeView !== "review") return;
+  const exportPayload = pdfExportPayload();
+  if (!exportPayload) return;
   downloadPdfButton.disabled = true;
   downloadPdfButton.textContent = "正在生成 PDF...";
   try {
     const response = await fetch("/api/export/pdf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(currentResult),
+      body: JSON.stringify(exportPayload),
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || "PDF export failed");
     }
     const blob = await response.blob();
-    downloadBlob(blob, "ai-paper-review-report.pdf");
+    downloadBlob(blob, activeView === "deep" ? "deep-research-plan.pdf" : "ai-paper-review-report.pdf");
   } catch (error) {
     renderMessage(`PDF 生成失败：${error.message}`, "error");
   } finally {
@@ -364,9 +390,43 @@ function setDeepResearchRunning(running) {
     : '<span class="button-icon">▶</span> 开始 Deep Research';
 }
 
+function guardedWorkflowSwitch(next) {
+  if (!runningWorkflow) {
+    next();
+    return;
+  }
+  const ok = window.confirm(
+    "当前 agents 还在运行。切换页面不会中止后端任务，但会离开当前进度视图；建议等待完成后再切换。\n\n确定要切换吗？"
+  );
+  if (ok) next();
+}
+
+function setToolbarMode(mode) {
+  const showShell = mode !== "home";
+  tabsSection.classList.toggle("hidden", !showShell);
+  reportToolbar.classList.toggle("hidden", !showShell);
+  reportPanel.classList.toggle("hidden", !showShell);
+  if (!showShell) return;
+  copyButton.classList.remove("hidden");
+  downloadMdButton.classList.remove("hidden");
+  downloadPdfButton.classList.remove("hidden");
+  revisionPlanButton.classList.toggle("hidden", mode !== "review" && mode !== "revision");
+}
+
+function pdfExportPayload() {
+  if (activeView === "deep" && currentDeepResearch) {
+    return deepResearchPdfPayload(currentDeepResearch);
+  }
+  if (activeView === "review" && currentResult) {
+    return currentResult;
+  }
+  return null;
+}
+
 function showHome() {
   activeView = "home";
   setActiveWorkflow("home");
+  setToolbarMode("home");
   homeGrid.classList.remove("hidden");
   agentLane.classList.add("hidden");
   deepResearchForm.classList.add("hidden");
@@ -392,6 +452,7 @@ function showHome() {
 function showDeepResearch() {
   activeView = "deep";
   setActiveWorkflow("deep");
+  setToolbarMode("deep");
   homeGrid.classList.add("hidden");
   agentLane.classList.remove("hidden");
   deepResearchForm.classList.remove("hidden");
@@ -404,7 +465,7 @@ function showDeepResearch() {
   tabs.innerHTML = "";
   copyButton.disabled = !currentDeepResearch;
   downloadMdButton.disabled = !currentDeepResearch;
-  downloadPdfButton.disabled = true;
+  downloadPdfButton.disabled = !currentDeepResearch;
   revisionPlanButton.disabled = true;
   if (currentDeepResearch) {
     renderDeepResearchResult(currentDeepResearch);
@@ -416,6 +477,7 @@ function showDeepResearch() {
 function showReviewer() {
   activeView = "review";
   setActiveWorkflow("review");
+  setToolbarMode("review");
   homeGrid.classList.add("hidden");
   agentLane.classList.remove("hidden");
   deepResearchForm.classList.add("hidden");
@@ -537,6 +599,7 @@ function markAgentsError() {
 
 function renderResult(data) {
   activeView = "review";
+  setToolbarMode("review");
   const profile = data.profile;
   paperTitle.textContent = profile.title || "Untitled Manuscript";
   summaryMetrics.innerHTML = `
@@ -584,6 +647,7 @@ function renderResult(data) {
 
 function showRevisionShell(message) {
   activeView = "revision";
+  setToolbarMode("revision");
   paperTitle.textContent = currentResult?.profile?.title
     ? `${currentResult.profile.title} · 修改计划`
     : "论文修改计划";
@@ -606,6 +670,7 @@ function showRevisionShell(message) {
 
 function renderRevisionPlan(data) {
   activeView = "revision";
+  setToolbarMode("revision");
   const plan = data.plan || {};
   const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
   paperTitle.textContent = plan.title || "论文修改计划";
@@ -636,6 +701,7 @@ function renderRevisionPlan(data) {
 function renderDeepResearchResult(data) {
   activeView = "deep";
   setActiveWorkflow("deep");
+  setToolbarMode("deep");
   homeGrid.classList.add("hidden");
   agentLane.classList.remove("hidden");
   deepResearchForm.classList.remove("hidden");
@@ -693,7 +759,7 @@ function renderDeepResearchResult(data) {
 
   copyButton.disabled = false;
   downloadMdButton.disabled = false;
-  downloadPdfButton.disabled = true;
+  downloadPdfButton.disabled = false;
   revisionPlanButton.disabled = true;
   reportOutput.innerHTML = buildDeepResearchHtml(data);
 }
@@ -1052,6 +1118,30 @@ function stripTags(text) {
 
 function buildAllMarkdown(data) {
   return data.agents.map((agent) => `# ${agent.label}\n\n${agent.markdown}`).join("\n\n---\n\n");
+}
+
+function deepResearchPdfPayload(data) {
+  const agents = Array.isArray(data.agents) ? data.agents : [];
+  return {
+    profile: {
+      title: data.topic || "Deep Research Plan",
+      word_count: 0,
+      reference_count: 0,
+    },
+    summary: {
+      decision: "Deep Research Plan",
+    },
+    report_type: "deep_research",
+    provider: data.provider || "openai",
+    created_at: data.created_at || "",
+    agents: agents.map((agent) => ({
+      id: agent.id,
+      label: agent.label,
+      recommendation: "完成",
+      confidence: agent.confidence || "-",
+      markdown: agent.markdown || "",
+    })),
+  };
 }
 
 function downloadBlob(blob, filename) {

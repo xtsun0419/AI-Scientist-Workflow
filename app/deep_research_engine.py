@@ -72,6 +72,7 @@ def run_llm_deep_research(topic: str, options: dict[str, Any], progress: Any = N
         "Output language requirement: write concrete research guidance in Chinese. "
         "Keep agent names, method names, databases, and key technical terms bilingual when helpful.\n"
         "Do not fabricate citations, DOI, data, or evidence. If a real literature search is required, provide search strings, databases, and source-selection criteria instead of fake references.\n"
+        "Return Markdown body only. Do not prepend JSON, YAML frontmatter, metadata blocks, tool-call schemas, or code fences.\n"
         "This is an MVP Deep Research workflow. Produce the assigned phase deliverable only.\n\n"
         f"Mode: {mode}\nResearch topic / user idea:\n{topic}"
     )
@@ -101,6 +102,7 @@ def run_llm_deep_research(topic: str, options: dict[str, Any], progress: Any = N
                 },
             ],
         )
+        content = clean_agent_markdown(content)
         outputs[agent_id] = content
         agents.append(
             {
@@ -263,6 +265,7 @@ def build_workflow(topic: str, agents: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def summarize_markdown(markdown: str) -> str:
+    markdown = clean_agent_markdown(markdown)
     lines = [line.strip(" -#\t") for line in markdown.splitlines() if line.strip()]
     useful = [line for line in lines if len(line) >= 18 and not line.startswith("|")]
     return useful[0][:180] if useful else "该阶段已完成。"
@@ -270,5 +273,83 @@ def summarize_markdown(markdown: str) -> str:
 
 def build_deep_markdown(topic: str, agents: list[dict[str, Any]]) -> str:
     sections = [f"# Deep Research Plan\n\n**Topic**: {topic}"]
-    sections.extend(f"# {agent['label']}\n\n{agent.get('markdown', '')}" for agent in agents)
+    sections.extend(f"# {agent['label']}\n\n{clean_agent_markdown(agent.get('markdown', ''))}" for agent in agents)
     return "\n\n---\n\n".join(sections)
+
+
+def clean_agent_markdown(markdown: str) -> str:
+    text = str(markdown or "").strip()
+    text = strip_leading_yaml_frontmatter(text)
+    text = strip_leading_fenced_json(text)
+    text = strip_leading_json_value(text)
+    text = re.sub(r"<!--\s*(?:ref|anchor):.*?-->", "", text)
+    return text.strip()
+
+
+def strip_leading_yaml_frontmatter(text: str) -> str:
+    frontmatter = re.match(r"^\s*---\s*\n[\s\S]*?\n---\s*", text)
+    if not frontmatter:
+        return text
+    rest = text[frontmatter.end():].lstrip()
+    return rest or text
+
+
+def strip_leading_fenced_json(text: str) -> str:
+    fence = re.match(r"^\s*```(?:json|JSON)\s*\n(?P<body>[\s\S]*?)\n```\s*", text)
+    if not fence:
+        return text
+    rest = text[fence.end():].lstrip()
+    if rest:
+        return rest
+    extracted = markdown_from_json_text(fence.group("body"))
+    return extracted or rest or text
+
+
+def strip_leading_json_value(text: str) -> str:
+    stripped = text.lstrip()
+    if not stripped.startswith(("{", "[")):
+        return text
+    decoder = json.JSONDecoder()
+    try:
+        value, end = decoder.raw_decode(stripped)
+    except json.JSONDecodeError:
+        return text
+    rest = stripped[end:].lstrip()
+    if rest:
+        return rest
+    extracted = markdown_from_json_value(value)
+    return extracted or text
+
+
+def markdown_from_json_text(text: str) -> str:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return ""
+    return markdown_from_json_value(value)
+
+
+def markdown_from_json_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = [markdown_from_json_value(item) for item in value]
+        return "\n\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        preferred_keys = (
+            "markdown",
+            "content",
+            "report",
+            "synthesis_report",
+            "compiled_report",
+            "body",
+            "text",
+            "output",
+        )
+        for key in preferred_keys:
+            extracted = markdown_from_json_value(value.get(key))
+            if extracted:
+                return extracted
+        parts = [markdown_from_json_value(item) for item in value.values()]
+        return "\n\n".join(part for part in parts if part and len(part) > 20)
+    return ""
