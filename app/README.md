@@ -1,6 +1,6 @@
-# AI Paper Reviewer Web MVP
+# AI Scientist Workflow Web MVP
 
-本目录是一个本地网页版本，用来把 `academic-research-skills-main/academic-paper-reviewer` 中的多 agent 审稿流程放到浏览器界面里。
+本目录是一个本地网页版本，用来把 `academic-research-skills-main` 中的多 agent 学术工作流放到浏览器界面里。首页目前提供两个入口：Deep Research 和 AI Paper Reviewer。
 
 ## 启动
 
@@ -18,6 +18,12 @@ http://127.0.0.1:8765
 
 ## 支持输入
 
+Deep Research：
+
+- 研究主题、想法或问题
+
+AI Paper Reviewer：
+
 - `.txt`
 - `.md`
 - `.docx`
@@ -26,6 +32,18 @@ http://127.0.0.1:8765
 当前前端只保留文件上传，不再支持粘贴文本。
 
 ## 当前能力
+
+Deep Research：
+
+- Research Question：收束研究主题，提出可研究问题。
+- Research Architect：生成方法蓝图和数据策略。
+- Bibliography：生成检索式、数据库选择和筛选标准。
+- Synthesis：规划证据综合、冲突处理和研究空白映射。
+- Report Compiler：生成研究报告结构。
+- 输出以流程图和 agent 概览展示，同时支持下载 Markdown。
+- 当前版本不会编造真实文献、DOI 或数据；真实文献仍需要后续检索验证。
+
+AI Paper Reviewer：
 
 - Field Analyst 自动识别领域、方法类型、稿件成熟度，并配置评审团队。
 - 5 个评审角色独立输出意见：
@@ -74,6 +92,7 @@ python3 app/server.py
 
 ```text
 academic-research-skills-main/academic-paper-reviewer/agents/
+academic-research-skills-main/deep-research/agents/
 ```
 
 这样后续改 prompt 不需要改前端。

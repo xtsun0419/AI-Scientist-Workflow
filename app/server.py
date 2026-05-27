@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from deep_research_engine import run_deep_research
 from reviewer_engine import read_text_from_upload, run_review
 from revision_engine import review_result_from_markdown, run_revision_plan
 
@@ -43,8 +44,17 @@ REVISION_AGENT_ORDER = [
     ("revision_coach", "修改教练 / Revision Coach"),
 ]
 
+DEEP_RESEARCH_AGENT_ORDER = [
+    ("research_question", "研究问题 / Research Question"),
+    ("research_architect", "研究设计 / Research Architect"),
+    ("bibliography", "文献策略 / Bibliography"),
+    ("synthesis", "综合框架 / Synthesis"),
+    ("report_compiler", "报告大纲 / Report Compiler"),
+]
+
 TASKS: dict[str, dict] = {}
 REVISION_TASKS: dict[str, dict] = {}
+DEEP_RESEARCH_TASKS: dict[str, dict] = {}
 TASK_LOCK = threading.Lock()
 
 
@@ -58,7 +68,7 @@ def load_backend_config() -> dict:
 
 
 class ReviewerHandler(BaseHTTPRequestHandler):
-    server_version = "AIPaperReviewer/0.1"
+    server_version = "AIScientistWorkflow/0.1"
 
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"{self.client_address[0]} - {fmt % args}")
@@ -70,6 +80,9 @@ class ReviewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/revision-plan/status":
             self._handle_revision_plan_status()
+            return
+        if path == "/api/deep-research/status":
+            self._handle_deep_research_status()
             return
         if path in {"/", "/index.html"}:
             self._send_file(STATIC_DIR / "index.html")
@@ -94,6 +107,9 @@ class ReviewerHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/revision-plan/import":
             self._handle_revision_plan_import()
+            return
+        if path == "/api/deep-research/start":
+            self._handle_deep_research_start()
             return
         if path != "/api/review":
             self._send_json({"error": "Not found"}, status=404)
@@ -158,6 +174,32 @@ class ReviewerHandler(BaseHTTPRequestHandler):
         task_id = get_query_id(self.path)
         with TASK_LOCK:
             task = REVISION_TASKS.get(task_id)
+            payload = public_task_payload(task) if task else None
+        if not payload:
+            self._send_json({"error": "Task not found"}, status=404)
+            return
+        self._send_json(payload)
+
+    def _handle_deep_research_start(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            topic = body.get("topic", "")
+            backend_config = load_backend_config()
+            options = {
+                **backend_config,
+                "provider": backend_config.get("provider") or body.get("provider") or "openai",
+                "mode": body.get("mode") or "research-plan",
+            }
+            task_id = start_deep_research_task(topic, options)
+            self._send_json({"task_id": task_id})
+        except Exception as exc:
+            self._send_json({"error": str(exc)}, status=400)
+
+    def _handle_deep_research_status(self) -> None:
+        task_id = get_query_id(self.path)
+        with TASK_LOCK:
+            task = DEEP_RESEARCH_TASKS.get(task_id)
             payload = public_task_payload(task) if task else None
         if not payload:
             self._send_json({"error": "Task not found"}, status=404)
@@ -278,7 +320,7 @@ def main() -> None:
     host = "127.0.0.1"
     port = 8765
     httpd = ThreadingHTTPServer((host, port), ReviewerHandler)
-    print(f"AI Paper Reviewer running at http://{host}:{port}")
+    print(f"AI Scientist Workflow running at http://{host}:{port}")
     print("Press Ctrl+C to stop.")
     httpd.serve_forever()
 
@@ -308,6 +350,20 @@ def make_initial_revision_agents() -> list[dict]:
             "confidence": None,
         }
         for agent_id, label in REVISION_AGENT_ORDER
+    ]
+
+
+def make_initial_deep_research_agents() -> list[dict]:
+    return [
+        {
+            "id": agent_id,
+            "label": label,
+            "status": "pending",
+            "message": "等待中",
+            "recommendation": "",
+            "confidence": None,
+        }
+        for agent_id, label in DEEP_RESEARCH_AGENT_ORDER
     ]
 
 
@@ -389,6 +445,47 @@ def run_revision_plan_task(task_id: str, manuscript_text: str, review_result: di
     except Exception as exc:
         with TASK_LOCK:
             task = REVISION_TASKS[task_id]
+            task["status"] = "error"
+            task["error"] = str(exc)
+            for agent in task["agents"]:
+                if agent["status"] == "running":
+                    agent["status"] = "error"
+                    agent["message"] = "运行失败"
+            task["updated_at"] = time.time()
+
+
+def start_deep_research_task(topic: str, options: dict) -> str:
+    task_id = uuid.uuid4().hex
+    with TASK_LOCK:
+        DEEP_RESEARCH_TASKS[task_id] = {
+            "task_id": task_id,
+            "status": "running",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "agents": make_initial_deep_research_agents(),
+            "result": None,
+            "error": None,
+        }
+    thread = threading.Thread(target=run_deep_research_task, args=(task_id, topic, options), daemon=True)
+    thread.start()
+    return task_id
+
+
+def run_deep_research_task(task_id: str, topic: str, options: dict) -> None:
+    def progress(agent_id: str, status: str, **extra: object) -> None:
+        update_task_agent(task_id, agent_id, status, task_store=DEEP_RESEARCH_TASKS, **extra)
+
+    try:
+        result = run_deep_research(topic, options, progress=progress)
+        with TASK_LOCK:
+            task = DEEP_RESEARCH_TASKS[task_id]
+            task["status"] = "complete"
+            task["result"] = result
+            task["agents"] = normalize_agents_from_result(result, task["agents"])
+            task["updated_at"] = time.time()
+    except Exception as exc:
+        with TASK_LOCK:
+            task = DEEP_RESEARCH_TASKS[task_id]
             task["status"] = "error"
             task["error"] = str(exc)
             for agent in task["agents"]:

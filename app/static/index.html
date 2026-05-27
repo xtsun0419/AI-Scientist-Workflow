@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Paper Reviewer</title>
+    <title>AI Scientist Workflow</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -12,12 +12,44 @@
         <div class="brand">
           <div class="brand-mark">AR</div>
           <div>
-            <h1>AI Paper Reviewer</h1>
-            <p>多 Agent 投稿前评审 / Pre-submission review</p>
+            <h1>AI Scientist Workflow</h1>
+            <p>Deep Research + Paper Review</p>
           </div>
         </div>
 
-        <form id="reviewForm" class="control-panel">
+        <nav class="workflow-nav">
+          <button id="homeNavButton" type="button" class="active">首页 / Home</button>
+          <button id="deepResearchNavButton" type="button">Deep Research</button>
+          <button id="reviewNavButton" type="button">AI Paper Reviewer</button>
+        </nav>
+
+        <form id="deepResearchForm" class="control-panel workflow-panel hidden">
+          <div>
+            <h2>Deep Research</h2>
+            <p class="field-help">输入研究主题、想法或问题，生成研究问题、方法蓝图、文献检索策略、综合框架和报告大纲。</p>
+          </div>
+
+          <div class="field">
+            <label for="researchTopicInput">研究主题 / Topic</label>
+            <textarea id="researchTopicInput" name="topic" placeholder="例如：AI 工具如何影响高校教师科研写作质量与学术诚信治理？"></textarea>
+          </div>
+
+          <div class="field">
+            <label for="deepModeInput">研究模式</label>
+            <select id="deepModeInput" name="mode">
+              <option value="research-plan">研究规划 / Research plan</option>
+              <option value="lit-review">文献综述 / Literature review</option>
+              <option value="systematic-review">系统综述规划 / Systematic review plan</option>
+            </select>
+          </div>
+
+          <button id="runDeepResearchButton" type="submit">
+            <span class="button-icon">▶</span>
+            开始 Deep Research
+          </button>
+        </form>
+
+        <form id="reviewForm" class="control-panel workflow-panel hidden">
           <div class="field">
             <label for="fileInput">上传初稿</label>
             <input id="fileInput" name="file" type="file" accept=".txt,.md,.markdown,.docx,.pdf" />
@@ -40,7 +72,7 @@
           </button>
         </form>
 
-        <form id="revisionImportForm" class="control-panel secondary-panel">
+        <form id="revisionImportForm" class="control-panel secondary-panel workflow-panel hidden">
           <div>
             <h2>已有评审报告</h2>
             <p class="field-help">上传原始论文和上次下载的 Markdown 评审报告，可直接生成修改计划，不必重新运行评审 agents。</p>
@@ -66,9 +98,9 @@
       <main class="workspace">
         <section class="summary-band">
           <div>
-            <p class="eyebrow">Reviewer Console / 评审控制台</p>
-            <h2 id="paperTitle">等待上传初稿</h2>
-            <p class="confidence-note">置信度是每个评审角色对“自己这份判断可靠程度”的自评，1-5 分；它不是论文通过概率，也不是模型准确率。</p>
+            <p class="eyebrow" id="workspaceEyebrow">Workflow Home / 工作台首页</p>
+            <h2 id="paperTitle">选择一个工作流开始</h2>
+            <p class="confidence-note" id="workspaceNote">Deep Research 用于从研究主题生成研究规划；AI Paper Reviewer 用于上传论文初稿并生成多 agent 审稿意见。</p>
           </div>
           <div class="summary-metrics" id="summaryMetrics">
             <div><span>-</span><small>决策 / Decision</small></div>
@@ -78,7 +110,20 @@
           </div>
         </section>
 
-        <section class="agent-lane" id="agentLane" aria-live="polite">
+        <section class="home-grid" id="homeGrid">
+          <article class="home-card" data-target="deep">
+            <span class="home-kicker">Deep Research</span>
+            <h3>从研究想法到研究规划</h3>
+            <p>生成研究问题、方法蓝图、文献策略、综合框架和报告大纲。</p>
+          </article>
+          <article class="home-card" data-target="review">
+            <span class="home-kicker">AI Paper Reviewer</span>
+            <h3>上传初稿进行多 Agent 审稿</h3>
+            <p>获得中文评审意见、PDF 报告，并继续生成修改计划。</p>
+          </article>
+        </section>
+
+        <section class="agent-lane hidden" id="agentLane" aria-live="polite">
           <article class="agent-card idle">
             <div class="agent-top">
               <span class="status-dot"></span>
@@ -141,7 +186,7 @@
         </section>
 
         <section class="report-panel">
-          <div id="reportOutput" class="visual-report">请先在后端 app/config.json 中配置 API Key，然后上传论文初稿开始评审。具体评审意见默认用中文输出，题目、角色名和技术术语可中英并列。</div>
+          <div id="reportOutput" class="visual-report">选择一个工作流开始。</div>
         </section>
       </main>
     </div>

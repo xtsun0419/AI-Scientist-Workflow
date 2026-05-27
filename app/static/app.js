@@ -1,9 +1,15 @@
 const form = document.querySelector("#reviewForm");
 const revisionImportForm = document.querySelector("#revisionImportForm");
+const deepResearchForm = document.querySelector("#deepResearchForm");
+const homeNavButton = document.querySelector("#homeNavButton");
+const deepResearchNavButton = document.querySelector("#deepResearchNavButton");
+const reviewNavButton = document.querySelector("#reviewNavButton");
 const runButton = document.querySelector("#runButton");
 const importRevisionButton = document.querySelector("#importRevisionButton");
+const runDeepResearchButton = document.querySelector("#runDeepResearchButton");
 const reportOutput = document.querySelector("#reportOutput");
 const agentLane = document.querySelector("#agentLane");
+const homeGrid = document.querySelector("#homeGrid");
 const tabs = document.querySelector("#tabs");
 const copyButton = document.querySelector("#copyButton");
 const downloadMdButton = document.querySelector("#downloadMdButton");
@@ -11,12 +17,15 @@ const downloadPdfButton = document.querySelector("#downloadPdfButton");
 const revisionPlanButton = document.querySelector("#revisionPlanButton");
 const paperTitle = document.querySelector("#paperTitle");
 const summaryMetrics = document.querySelector("#summaryMetrics");
+const workspaceEyebrow = document.querySelector("#workspaceEyebrow");
+const workspaceNote = document.querySelector("#workspaceNote");
 
 let currentResult = null;
 let currentReviewTaskId = null;
 let currentRevisionPlan = null;
+let currentDeepResearch = null;
 let activeAgentId = null;
-let activeView = "review";
+let activeView = "home";
 let pollTimer = null;
 
 const startingAgents = [
@@ -36,6 +45,24 @@ const revisionAgents = [
   ["citation_compliance", "证据引用 / Citation Compliance"],
   ["revision_coach", "修改教练 / Revision Coach"],
 ];
+
+const deepResearchAgents = [
+  ["research_question", "研究问题 / Research Question"],
+  ["research_architect", "研究设计 / Research Architect"],
+  ["bibliography", "文献策略 / Bibliography"],
+  ["synthesis", "综合框架 / Synthesis"],
+  ["report_compiler", "报告大纲 / Report Compiler"],
+];
+
+homeNavButton.addEventListener("click", () => showHome());
+deepResearchNavButton.addEventListener("click", () => showDeepResearch());
+reviewNavButton.addEventListener("click", () => showReviewer());
+homeGrid.querySelectorAll(".home-card").forEach((card) => {
+  card.addEventListener("click", () => {
+    if (card.dataset.target === "deep") showDeepResearch();
+    if (card.dataset.target === "review") showReviewer();
+  });
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -69,6 +96,38 @@ form.addEventListener("submit", async (event) => {
     renderMessage(`评审失败：${error.message}`, "error");
     markAgentsError();
     setRunning(false);
+  }
+});
+
+deepResearchForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(deepResearchForm);
+  const topic = String(formData.get("topic") || "").trim();
+  const mode = String(formData.get("mode") || "research-plan");
+  if (topic.length < 20) {
+    renderMessage("请至少输入 20 个字符的研究主题、想法或背景。", "error");
+    return;
+  }
+  currentDeepResearch = null;
+  activeView = "deep";
+  setDeepResearchRunning(true);
+  renderDeepResearchPlaceholders();
+  renderMessage("正在调用 Deep Research agents。MVP 会依次生成研究问题、方法蓝图、文献策略、综合框架和报告大纲...");
+  try {
+    const response = await fetch("/api/deep-research/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, mode, provider: "openai" }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Deep Research failed");
+    }
+    pollDeepResearchTask(data.task_id);
+  } catch (error) {
+    renderMessage(`Deep Research 失败：${error.message}`, "error");
+    markAgentsError();
+    setDeepResearchRunning(false);
   }
 });
 
@@ -195,7 +254,39 @@ async function pollRevisionPlanTask(taskId) {
   }
 }
 
+async function pollDeepResearchTask(taskId) {
+  if (pollTimer) clearTimeout(pollTimer);
+  try {
+    const response = await fetch(`/api/deep-research/status?id=${encodeURIComponent(taskId)}`);
+    const task = await response.json();
+    if (!response.ok) {
+      throw new Error(task.error || "Deep Research status failed");
+    }
+    renderProgress(task);
+    if (task.status === "complete") {
+      currentDeepResearch = task.result;
+      renderDeepResearchResult(currentDeepResearch);
+      setDeepResearchRunning(false);
+      return;
+    }
+    if (task.status === "error") {
+      renderMessage(`Deep Research 失败：${task.error}`, "error");
+      markAgentsError();
+      setDeepResearchRunning(false);
+      return;
+    }
+    pollTimer = setTimeout(() => pollDeepResearchTask(taskId), 1200);
+  } catch (error) {
+    renderMessage(`Deep Research 进度获取失败：${error.message}`, "error");
+    setDeepResearchRunning(false);
+  }
+}
+
 copyButton.addEventListener("click", async () => {
+  if (activeView === "deep" && currentDeepResearch) {
+    await navigator.clipboard.writeText(currentDeepResearch.markdown || "");
+    return;
+  }
   if (activeView === "revision" && currentRevisionPlan) {
     await navigator.clipboard.writeText(currentRevisionPlan.markdown || "");
     return;
@@ -206,10 +297,19 @@ copyButton.addEventListener("click", async () => {
 });
 
 downloadMdButton.addEventListener("click", () => {
-  if (!currentResult && !currentRevisionPlan) return;
-  const content = activeView === "revision" && currentRevisionPlan ? currentRevisionPlan.markdown : buildAllMarkdown(currentResult);
+  if (!currentResult && !currentRevisionPlan && !currentDeepResearch) return;
+  let content = currentResult ? buildAllMarkdown(currentResult) : "";
+  let filename = "ai-paper-review-report.md";
+  if (activeView === "revision" && currentRevisionPlan) {
+    content = currentRevisionPlan.markdown;
+    filename = "ai-paper-revision-plan.md";
+  }
+  if (activeView === "deep" && currentDeepResearch) {
+    content = currentDeepResearch.markdown;
+    filename = "deep-research-plan.md";
+  }
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  downloadBlob(blob, activeView === "revision" ? "ai-paper-revision-plan.md" : "ai-paper-review-report.md");
+  downloadBlob(blob, filename);
 });
 
 downloadPdfButton.addEventListener("click", async () => {
@@ -255,6 +355,100 @@ function setRevisionRunning(running) {
     : '<span class="button-icon">↳</span> 导入并生成修改计划';
 }
 
+function setDeepResearchRunning(running) {
+  runDeepResearchButton.disabled = running;
+  runButton.disabled = running;
+  importRevisionButton.disabled = running;
+  runDeepResearchButton.innerHTML = running
+    ? '<span class="button-icon">●</span> 正在研究'
+    : '<span class="button-icon">▶</span> 开始 Deep Research';
+}
+
+function showHome() {
+  activeView = "home";
+  setActiveWorkflow("home");
+  homeGrid.classList.remove("hidden");
+  agentLane.classList.add("hidden");
+  deepResearchForm.classList.add("hidden");
+  form.classList.add("hidden");
+  revisionImportForm.classList.add("hidden");
+  workspaceEyebrow.textContent = "Workflow Home / 工作台首页";
+  paperTitle.textContent = "选择一个工作流开始";
+  workspaceNote.textContent = "Deep Research 用于从研究主题生成研究规划；AI Paper Reviewer 用于上传论文初稿并生成多 agent 审稿意见。";
+  summaryMetrics.innerHTML = `
+    <div><span>2</span><small>Workflows</small></div>
+    <div><span>5</span><small>Deep Agents</small></div>
+    <div><span>7</span><small>Review Agents</small></div>
+    <div><span>本地</span><small>Backend</small></div>
+  `;
+  tabs.innerHTML = "";
+  copyButton.disabled = true;
+  downloadMdButton.disabled = true;
+  downloadPdfButton.disabled = true;
+  revisionPlanButton.disabled = true;
+  reportOutput.innerHTML = `<div class="empty-state">选择左侧或上方卡片进入一个工作流。</div>`;
+}
+
+function showDeepResearch() {
+  activeView = "deep";
+  setActiveWorkflow("deep");
+  homeGrid.classList.add("hidden");
+  agentLane.classList.remove("hidden");
+  deepResearchForm.classList.remove("hidden");
+  form.classList.add("hidden");
+  revisionImportForm.classList.add("hidden");
+  workspaceEyebrow.textContent = "Deep Research Console / 深度研究控制台";
+  paperTitle.textContent = currentDeepResearch?.topic || "等待输入研究主题";
+  workspaceNote.textContent = "Deep Research 当前 MVP 会串联 5 个核心 agents，生成研究规划而不是编造真实文献。";
+  renderDeepResearchPlaceholders(false);
+  tabs.innerHTML = "";
+  copyButton.disabled = !currentDeepResearch;
+  downloadMdButton.disabled = !currentDeepResearch;
+  downloadPdfButton.disabled = true;
+  revisionPlanButton.disabled = true;
+  if (currentDeepResearch) {
+    renderDeepResearchResult(currentDeepResearch);
+  } else {
+    renderMessage("输入研究主题后开始。具体研究规划默认用中文输出，术语可中英并列。");
+  }
+}
+
+function showReviewer() {
+  activeView = "review";
+  setActiveWorkflow("review");
+  homeGrid.classList.add("hidden");
+  agentLane.classList.remove("hidden");
+  deepResearchForm.classList.add("hidden");
+  form.classList.remove("hidden");
+  revisionImportForm.classList.remove("hidden");
+  workspaceEyebrow.textContent = "Reviewer Console / 评审控制台";
+  workspaceNote.textContent = "置信度是每个评审角色对“自己这份判断可靠程度”的自评，1-5 分；它不是论文通过概率，也不是模型准确率。";
+  if (currentResult) {
+    renderResult(currentResult);
+  } else {
+    paperTitle.textContent = "等待上传初稿";
+    summaryMetrics.innerHTML = `
+      <div><span>-</span><small>决策 / Decision</small></div>
+      <div><span>-</span><small>词数 / Words</small></div>
+      <div><span>-</span><small>文献 / Refs</small></div>
+      <div><span>-</span><small>Agents</small></div>
+    `;
+    renderAgentPlaceholders();
+    tabs.innerHTML = "";
+    copyButton.disabled = true;
+    downloadMdButton.disabled = true;
+    downloadPdfButton.disabled = true;
+    revisionPlanButton.disabled = true;
+    renderMessage("请先在后端 app/config.json 中配置 API Key，然后上传论文初稿开始评审。具体评审意见默认用中文输出，题目、角色名和技术术语可中英并列。");
+  }
+}
+
+function setActiveWorkflow(workflow) {
+  homeNavButton.classList.toggle("active", workflow === "home");
+  deepResearchNavButton.classList.toggle("active", workflow === "deep");
+  reviewNavButton.classList.toggle("active", workflow === "review");
+}
+
 function renderAgentPlaceholders() {
   agentLane.innerHTML = startingAgents
     .map(
@@ -280,6 +474,21 @@ function renderRevisionAgentPlaceholders() {
           <strong>${escapeHtml(label)}</strong>
         </div>
         <p>${index === 0 ? "正在处理" : "等待中"}</p>
+      </article>`
+    )
+    .join("");
+}
+
+function renderDeepResearchPlaceholders(showRunning = true) {
+  agentLane.innerHTML = deepResearchAgents
+    .map(
+      ([id, label], index) => `
+      <article class="agent-card ${showRunning && index === 0 ? "running" : "idle"}" data-agent="${id}">
+        <div class="agent-top">
+          <span class="status-dot"></span>
+          <strong>${escapeHtml(label)}</strong>
+        </div>
+        <p>${showRunning && index === 0 ? "正在处理" : "等待中"}</p>
       </article>`
     )
     .join("");
@@ -422,6 +631,141 @@ function renderRevisionPlan(data) {
   revisionPlanButton.disabled = false;
   revisionPlanButton.textContent = "查看修改计划";
   reportOutput.innerHTML = buildRevisionPlanHtml(plan);
+}
+
+function renderDeepResearchResult(data) {
+  activeView = "deep";
+  setActiveWorkflow("deep");
+  homeGrid.classList.add("hidden");
+  agentLane.classList.remove("hidden");
+  deepResearchForm.classList.remove("hidden");
+  form.classList.add("hidden");
+  revisionImportForm.classList.add("hidden");
+
+  const agents = Array.isArray(data.agents) ? data.agents : [];
+  const workflow = Array.isArray(data.workflow) ? data.workflow : [];
+  paperTitle.textContent = data.topic || "Deep Research Plan";
+  workspaceEyebrow.textContent = "Deep Research Console / 深度研究控制台";
+  workspaceNote.textContent = "Deep Research 当前 MVP 会串联 5 个核心 agents，生成研究规划而不是编造真实文献。";
+  summaryMetrics.innerHTML = `
+    <div><span>${workflow.length || agents.length}</span><small>阶段 / Phases</small></div>
+    <div><span>${agents.length}</span><small>Agents</small></div>
+    <div><span>${escapeHtml(data.provider || "openai")}</span><small>Provider</small></div>
+    <div><span>${escapeHtml(modeLabel(data.mode))}</span><small>Mode</small></div>
+  `;
+
+  agentLane.innerHTML = agents
+    .map(
+      (agent) => `
+      <article class="agent-card complete" data-agent="${agent.id}">
+        <div class="agent-top">
+          <span class="status-dot"></span>
+          <strong>${escapeHtml(agent.label)}</strong>
+        </div>
+        <p>完成 · 置信度 ${agent.confidence || "-"}/5</p>
+      </article>`
+    )
+    .join("");
+
+  tabs.innerHTML = `
+    <button type="button" class="active" data-deep-tab="workflow">研究流程图</button>
+    ${agents
+      .map(
+        (agent) => `
+        <button type="button" data-deep-tab="${agent.id}">
+          ${escapeHtml(shortDeepLabel(agent.label))}
+        </button>`
+      )
+      .join("")}
+  `;
+  tabs.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tabId = button.dataset.deepTab;
+      tabs.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+      if (tabId === "workflow") {
+        reportOutput.innerHTML = buildDeepResearchHtml(data);
+        return;
+      }
+      const agent = agents.find((item) => item.id === tabId);
+      renderDeepAgentReport(agent, data);
+    });
+  });
+
+  copyButton.disabled = false;
+  downloadMdButton.disabled = false;
+  downloadPdfButton.disabled = true;
+  revisionPlanButton.disabled = true;
+  reportOutput.innerHTML = buildDeepResearchHtml(data);
+}
+
+function renderDeepAgentReport(agent, data) {
+  if (!agent) {
+    renderMessage("未找到该 Deep Research agent 的输出。", "error");
+    return;
+  }
+  reportOutput.innerHTML = `
+    <div class="report-heading deep-heading">
+      <span class="report-kicker">${escapeHtml(agent.label)}</span>
+      <h3>${escapeHtml(agent.recommendation || "完成")}</h3>
+      <div class="report-badges">
+        <span>置信度 ${agent.confidence || "-"}/5</span>
+        <span>${escapeHtml(data.provider || "openai")}</span>
+      </div>
+    </div>
+    <div class="markdown-body">${markdownToHtml(agent.markdown)}</div>
+  `;
+}
+
+function buildDeepResearchHtml(data) {
+  const workflow = Array.isArray(data.workflow) ? data.workflow : [];
+  const agents = Array.isArray(data.agents) ? data.agents : [];
+  return `
+    <div class="deep-board">
+      <header class="deep-hero">
+        <div>
+          <span class="report-kicker">Deep Research Workflow / 深度研究工作流</span>
+          <h3>${escapeHtml(data.topic || "Deep Research Plan")}</h3>
+          <p>这是基于本地 Deep Research agents 的研究规划视图。它会给出问题收束、方法设计、文献策略、综合框架和报告结构；真实文献仍需要后续检索验证。</p>
+        </div>
+        <div class="deep-mode-card">
+          <strong>${escapeHtml(modeLabel(data.mode))}</strong>
+          <span>${escapeHtml(data.provider || "openai")}</span>
+        </div>
+      </header>
+      <div class="deep-flow">
+        ${workflow.map((step) => deepWorkflowStepHtml(step)).join("")}
+      </div>
+      <section class="deep-panel">
+        <h4>Agent 输出概览 / Agent Output Map</h4>
+        <div class="deep-agent-grid">
+          ${agents.map((agent) => deepAgentSummaryHtml(agent)).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function deepWorkflowStepHtml(step) {
+  return `
+    <article class="deep-step">
+      <div class="deep-step-top">
+        <span>${escapeHtml(step.phase || "-")}</span>
+        <strong>${escapeHtml(shortDeepLabel(step.label || step.id || ""))}</strong>
+      </div>
+      <h4>${escapeHtml(step.objective || "")}</h4>
+      <p>${escapeHtml(step.summary || "")}</p>
+    </article>
+  `;
+}
+
+function deepAgentSummaryHtml(agent) {
+  return `
+    <article>
+      <strong>${escapeHtml(agent.label || "")}</strong>
+      <p>${escapeHtml(firstUsefulLine(agent.markdown) || "该阶段已完成。")}</p>
+      <small>置信度 ${agent.confidence || "-"}/5</small>
+    </article>
+  `;
 }
 
 function buildRevisionPlanHtml(plan) {
@@ -734,6 +1078,31 @@ function shortLabel(label) {
     .replace("Editorial ", "");
 }
 
+function shortDeepLabel(label) {
+  return String(label || "")
+    .replace("研究问题 / ", "")
+    .replace("研究设计 / ", "")
+    .replace("文献策略 / ", "")
+    .replace("综合框架 / ", "")
+    .replace("报告大纲 / ", "");
+}
+
+function modeLabel(mode) {
+  const labels = {
+    "research-plan": "研究规划",
+    "lit-review": "文献综述",
+    "systematic-review": "系统综述",
+  };
+  return labels[mode] || mode || "-";
+}
+
+function firstUsefulLine(markdown) {
+  return String(markdown || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-#*\s]+/, "").trim())
+    .find((line) => line.length >= 14 && !line.startsWith("|"));
+}
+
 function formatRecommendation(value) {
   const labels = {
     Accept: "接收 / Accept",
@@ -763,3 +1132,5 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
+
+showHome();
